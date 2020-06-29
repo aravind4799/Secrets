@@ -12,7 +12,11 @@ const BodyParser = require("body-parser")
 const mongoose = require("mongoose")
 const ejs = require("ejs")
 //to perform encryption
-const encrypt = require("mongoose-encryption")
+//const encrypt = require("mongoose-encryption")
+
+//to perform hashing
+const md5 = require("md5")
+
 const app = express()
 app.use(BodyParser.urlencoded({extended:true}))
 
@@ -29,7 +33,7 @@ const secret_schema = new mongoose.Schema({
 //encryption of database with a secret key, password field is encrypted at the
 // time of .save() and automatically decrypted at the time of .find()
 
-secret_schema.plugin(encrypt, { secret: process.env.SECRET_KEY , encryptedFields: ["password"] });
+//secret_schema.plugin(encrypt, { secret: process.env.SECRET_KEY , encryptedFields: ["password"] });
 
 const secret = mongoose.model("secret",secret_schema)
 
@@ -54,7 +58,7 @@ app.post("/register",function(req,res){
 
   const user_data = secret({
     user_id:req.body.username,
-    password:req.body.password
+    password:md5(req.body.password)
   })
 
 user_data.save(function(err){
@@ -76,7 +80,7 @@ app.post("/login",function(req,res){
     }
     else{
       if(found_data){
-        if(found_data.password === req.body.password){
+        if(found_data.password === md5(req.body.password)){
           res.render("secrets")
         }
         else{
