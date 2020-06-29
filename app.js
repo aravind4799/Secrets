@@ -1,21 +1,28 @@
 //jshint esversion:6
 
 require('dotenv').config()
+
 //using dotenv to keep private data ,such as api keys ,encryption keys etc
 //setup a .env file and access these variables from it using process.env
 //dont forget to add this to gitignore else all ur work is just a joke,,
 //better to copy the default template from github gitignore for node
 //touch .env .gitignore
 //ls -a reveals this hidden files
+
 const express = require("express")
 const BodyParser = require("body-parser")
 const mongoose = require("mongoose")
 const ejs = require("ejs")
+
 //to perform encryption
 //const encrypt = require("mongoose-encryption")
 
 //to perform hashing
-const md5 = require("md5")
+//const md5 = require("md5")
+
+//to perform hashing using bcrypt hashing,includes salting
+const bcrypt = require("bcrypt")
+const saltRounds = 10
 
 const app = express()
 app.use(BodyParser.urlencoded({extended:true}))
@@ -56,42 +63,50 @@ app.get("/submit",function(req,res){
 
 app.post("/register",function(req,res){
 
-  const user_data = secret({
-    user_id:req.body.username,
-    password:md5(req.body.password)
-  })
+//bcrypt hashing
+  bcrypt.genSalt(saltRounds, function(err, salt) {
+    bcrypt.hash(req.body.password, salt, function(err, hash) {
+      // password is turned into hash
+      const user_data = secret({
+        user_id:req.body.username,
+        password:hash
+      })
 
-user_data.save(function(err){
-  if(err){
-    res.send(err)
-  }
-  else{
-    res.render("secrets")
-  }
-})
-
-})
-
-app.post("/login",function(req,res){
-
-  secret.findOne({user_id:req.body.username},function(err,found_data){
-    if(err){
-      res.send(err)
-    }
-    else{
-      if(found_data){
-        if(found_data.password === md5(req.body.password)){
-          res.render("secrets")
+      user_data.save(function(err){
+        if(err){
+          res.send(err)
         }
         else{
-          //console.log("handled");
-          res.send("password incorrect")
+          res.render("secrets")
         }
-      }
-    }
-  })
+      })
+
+    });
+});
+
 })
 
+app.post("/login", function(req, res) {
+
+      secret.findOne({user_id: req.body.username}, function(err, found_data) {
+          if (err) {
+            res.send(err)
+          }
+          else {
+            if (found_data) {
+              //found_data.password contains the hash generated during registeration process
+              bcrypt.compare(req.body.password,found_data.password, function(err, result) {
+                if (result === true) {
+                  res.render("secrets")
+                }
+                else {
+                  res.send("password incorrect")
+                }
+              })
+            }
+          }
+      })
+});
 
 
 
