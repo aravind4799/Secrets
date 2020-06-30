@@ -21,8 +21,15 @@ const ejs = require("ejs")
 //const md5 = require("md5")
 
 //to perform hashing using bcrypt hashing,includes salting
-const bcrypt = require("bcrypt")
-const saltRounds = 10
+//const bcrypt = require("bcrypt")
+//const saltRounds = 10
+
+//using passport , passport-local ,passport-localmongoose ,express-session
+//to perform authentication---hashing and salting
+
+const passport = require("passport")
+const session = require("express-session")
+const passportLocalMongoose = require("passport-local-mongoose")
 
 const app = express()
 app.use(BodyParser.urlencoded({extended:true}))
@@ -30,12 +37,28 @@ app.use(BodyParser.urlencoded({extended:true}))
 app.set('view engine','ejs')
 app.use(express.static('public'))
 
+//let app use the package session
+app.use(session({
+  secret: process.env.SECRET_KEY,
+  resave: false,
+  saveUninitialized: false
+}))
+
+//initialize passport
+app.use(passport.initialize())
+//and let passport handle session
+app.use(passport.session())
+
 mongoose.connect("mongodb://localhost:27017/secretDB",{ useNewUrlParser: true , useUnifiedTopology: true })
+mongoose.set('useCreateIndex', true);
 
 const secret_schema = new mongoose.Schema({
-  user_id:String,
+  username:String,
   password:String
 })
+
+//passportLocalMongoose is the package we are using to hash and salt passwords and store it into database
+secret_schema.plugin(passportLocalMongoose);
 
 //encryption of database with a secret key, password field is encrypted at the
 // time of .save() and automatically decrypted at the time of .find()
@@ -43,6 +66,15 @@ const secret_schema = new mongoose.Schema({
 //secret_schema.plugin(encrypt, { secret: process.env.SECRET_KEY , encryptedFields: ["password"] });
 
 const secret = mongoose.model("secret",secret_schema)
+
+//  CHANGE: USE "createStrategy" INSTEAD OF "authenticate"
+//default local
+passport.use(secret.createStrategy());
+// use static serialize and deserialize of model for passport session support
+//serialize is a process of setting up cookie containing user identification data
+passport.serializeUser(secret.serializeUser());
+//deserialize is a process of breaking the cookie -- and getting the data in it
+passport.deserializeUser(secret.deserializeUser());
 
 
 app.get("/",function(req,res){
@@ -61,51 +93,73 @@ app.get("/submit",function(req,res){
   res.render("submit")
 })
 
+app.get("/secret",function(req,res){
+  //check to see if the user is authenticated
+  if(req.isAuthenticated()){
+    res.render("secrets")
+  }
+  else{
+    res.redirect("/login")
+  }
+})
+
+app.get("/logout",function(req,res){
+  //logout is method from passport
+  //it ends the user session
+  //when ever he server is restarted the session and cookie is deleted
+  req.logout()
+
+  res.redirect("/")
+})
+
+
 app.post("/register",function(req,res){
+console.log(req.body.username);
+console.log(req.body.password);
+//register is a function from passportLocalMongoose
+// adds the username salt and hash into database -for password entered
+//username is defaultb key
+  secret.register({username:req.body.username},req.body.password,function(err,secret){
+    if(err){
+      console.log(secret);
+      console.log(err);
+      res.redirect("/")
+    }
+    else{
+      //if authentication is successful then we established a session which lasts until the user
+      //closes the browser and can tap into /secret route in the session with the help on cookie
+      //generated
 
-//bcrypt hashing
-  bcrypt.genSalt(saltRounds, function(err, salt) {
-    bcrypt.hash(req.body.password, salt, function(err, hash) {
-      // password is turned into hash
-      const user_data = secret({
-        user_id:req.body.username,
-        password:hash
+      //creates a local session
+      passport.authenticate("local")(req,res,function(){
+        res.redirect("/secret")
       })
-
-      user_data.save(function(err){
-        if(err){
-          res.send(err)
-        }
-        else{
-          res.render("secrets")
-        }
-      })
-
-    });
-});
-
+    }
+  })
 })
 
 app.post("/login", function(req, res) {
 
-      secret.findOne({user_id: req.body.username}, function(err, found_data) {
-          if (err) {
-            res.send(err)
-          }
-          else {
-            if (found_data) {
-              //found_data.password contains the hash generated during registeration process
-              bcrypt.compare(req.body.password,found_data.password, function(err, result) {
-                if (result === true) {
-                  res.render("secrets")
-                }
-                else {
-                  res.send("password incorrect")
-                }
-              })
-            }
-          }
+  const new_user = secret({
+    username:req.body.username,
+    password:req.body.password
+  })
+
+  //login is a function from passport package used to check if given user_id is found in DB
+  req.login(new_user,function(err){
+    if(err){
+      console.log(err);
+      res.redirect("/")
+    }
+    else{
+      //authenticate the user
+      //create a cookie with a local session_id
+      passport.authenticate("local")(req,res,function(){
+        res.redirect("/secret")
       })
+    }
+  })
+
 });
 
 
