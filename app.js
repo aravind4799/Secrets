@@ -30,6 +30,10 @@ const ejs = require("ejs")
 const passport = require("passport")
 const session = require("express-session")
 const passportLocalMongoose = require("passport-local-mongoose")
+const GoogleStrategy = require('passport-google-oauth20').Strategy
+const FacebookStrategy = require('passport-facebook').Strategy
+//to implement findOrCreate
+const findOrCreate = require('mongoose-findorcreate')
 
 const app = express()
 app.use(BodyParser.urlencoded({extended:true}))
@@ -54,11 +58,16 @@ mongoose.set('useCreateIndex', true);
 
 const secret_schema = new mongoose.Schema({
   username:String,
-  password:String
+  password:String,
+  googleId:String,
+  facebookId:String,
+  secret:String
 })
 
 //passportLocalMongoose is the package we are using to hash and salt passwords and store it into database
 secret_schema.plugin(passportLocalMongoose);
+//in order to use mongoose-findOrCreate
+secret_schema.plugin(findOrCreate);
 
 //encryption of database with a secret key, password field is encrypted at the
 // time of .save() and automatically decrypted at the time of .find()
@@ -72,14 +81,77 @@ const secret = mongoose.model("secret",secret_schema)
 passport.use(secret.createStrategy());
 // use static serialize and deserialize of model for passport session support
 //serialize is a process of setting up cookie containing user identification data
-passport.serializeUser(secret.serializeUser());
+//this comes from passportLocalMongoose
+//passport.serializeUser(secret.serializeUser());
+passport.serializeUser(function(user, done) {
+  done(null, user.id);
+});
+
 //deserialize is a process of breaking the cookie -- and getting the data in it
-passport.deserializeUser(secret.deserializeUser());
+//this comes from passportLocalMongoose
+//passport.deserializeUser(secret.deserializeUser());
+passport.deserializeUser(function(id, done) {
+  secret.findById(id, function(err, user) {
+    done(err, user);
+  });
+});
+
+
+passport.use(new GoogleStrategy({
+    clientID: process.env.CLIENT_ID,
+    clientSecret: process.env.CLIENT_SECRET,
+    callbackURL: "http://localhost:3000/auth/google/secrets",
+    //to solve the google+ deprication
+    userProfileURL: "https://www.googleapis.com/oauth2/v3/userinfo"
+  },
+  function(accessToken, refreshToken, profile, cb) {
+    secret.findOrCreate({ googleId: profile.id }, function (err, user) {
+      return cb(err, user);
+    });
+  }
+));
+
+passport.use(new FacebookStrategy({
+    clientID: process.env.APP_ID,
+    clientSecret: process.env.APP_SECRET,
+    callbackURL: "http://localhost:3000/auth/facebook/callback"
+  },
+  function(accessToken, refreshToken, profile, cb) {
+    secret.findOrCreate({ facebookId: profile.id }, function (err, user) {
+      return cb(err, user);
+    });
+  }
+));
+
 
 
 app.get("/",function(req,res){
   res.render("home")
 })
+
+
+app.get('/auth/google',
+  passport.authenticate('google', { scope: ["profile"] }));
+
+app.get('/auth/google/secrets',
+  passport.authenticate('google', { failureRedirect: '/login' }),
+  function(req, res) {
+    // Successful authentication, redirect secrets.
+    res.redirect('/secret');
+  });
+
+
+  app.get('/auth/facebook',
+    passport.authenticate('facebook'));
+
+  app.get('/auth/facebook/callback',
+    passport.authenticate('facebook', { failureRedirect: '/login' }),
+    function(req, res) {
+      // Successful authentication, redirect home.
+      res.redirect('/secret');
+    });
+
+
 
 app.get("/login",function(req,res){
   res.render("login")
@@ -94,12 +166,23 @@ app.get("/submit",function(req,res){
 })
 
 app.get("/secret",function(req,res){
-  //check to see if the user is authenticated
+  //select all the secrets if its not null from collection to display
+  secret.find({"secret":{$ne: null}} ,function(err,found_data){
+    if(!err){
+        res.render("secrets",{user_secrets:found_data})
+    }
+    else{
+      console.log(err);
+    }
+  })
+})
+
+app.get("/submit",function(req,res){
   if(req.isAuthenticated()){
-    res.render("secrets")
+    res.render("submit")
   }
   else{
-    res.redirect("/login")
+    res.render("/login")
   }
 })
 
@@ -112,7 +195,25 @@ app.get("/logout",function(req,res){
   res.redirect("/")
 })
 
-
+app.post("/submit",function(req,res){
+  //contains the details of the current user in the session
+  //console.log(req.user);
+  secret.findById(req.user.id,function(err,found_data){
+    if(err){
+      console.log(err);
+    }
+    else{
+      if(found_data){
+        found_data.secret = req.body.secret
+        found_data.save(function(err){
+          if(!err){
+            res.redirect("/secret")
+          }
+        })
+      }
+    }
+  })
+})
 app.post("/register",function(req,res){
 console.log(req.body.username);
 console.log(req.body.password);
